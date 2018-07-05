@@ -1,10 +1,8 @@
-package imPack
+package rpc
 
 import (
 	"encoding/binary"
 	"errors"
-	//	"fmt"
-	"im/go/rpc"
 )
 
 const MAX_SIZE = 10214 * 1024
@@ -133,8 +131,8 @@ func (p ImPack) Encode() []byte {
 	return data
 }
 
-func (p ImPack) Decode(buffer *[]byte, size uint32) ([]rpc.Pack, uint32, error) {
-	ps := make([]rpc.Pack, 1)
+func (p ImPack) Decode(buffer *[]byte, size uint32) ([]Pack, uint32, error) {
+	ps := make([]Pack, 1)
 	i := 0
 	var useSize uint32 = 0
 	tmp := *buffer

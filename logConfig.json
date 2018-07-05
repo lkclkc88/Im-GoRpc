@@ -1,0 +1,26 @@
+{
+	"appendersMap": {
+		"console": {
+			"appender": "console"
+		},
+		"debugFile": {
+			"appender": "file",
+			"name": "debugFile",
+			"fileName": "/home/java/logs/mongoProxy/server.log",
+			"async": true,
+			"level": "DEBUG",
+			"bakLevel": 1
+		}
+	},
+	"loggers": [{
+			"name": "root",
+			"level": "INFO",
+			"appenders": [ "debugFile","console"]
+		},
+		{
+			"name": "im",
+			"level": "INFO",
+			"appenders": ["debugFile","console"]
+		}
+	]
+}

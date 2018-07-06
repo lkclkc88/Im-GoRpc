@@ -4,8 +4,16 @@ import (
 	"errors"
 	"net"
 	"sync"
+	atomic "sync/atomic"
 	"time"
+	//	"unsafe"
 )
+
+// 临时交换区，存放解包后遗留的socket数据
+type swap struct {
+	len      uint32
+	readBuff []byte
+}
 
 /*连接 ，包含连接的上线问信息 */
 type Connection struct {
@@ -14,30 +22,42 @@ type Connection struct {
 	rwLock     *sync.RWMutex //锁
 	heartTime  int           //单位秒，心跳事件
 	lastTime   int64         //最后处理时间，单位秒
-	status     bool          //状态，true激活状态，false关闭
+	status     int32         //状态，1激活状态，0关闭
 	handler    *Handler      //事件处理
 	pack       *Pack         //编码，解码接口
 	workerPool *WorkerPool   //执行工作池
 }
 
+// 创建新连接
+func NewConnection(conn *net.Conn, heartTime int, handler *Handler, pack *Pack, workerPool *WorkerPool) Connection {
+	return Connection{
+		Conn:       conn,
+		rwLock:     new(sync.RWMutex),
+		tmpData:    &swap{readBuff: make([]byte, 1024)},
+		heartTime:  heartTime,
+		lastTime:   time.Now().Unix(),
+		status:     1,
+		handler:    handler,
+		pack:       pack,
+		workerPool: workerPool,
+	}
+}
+
 //判断连接是否关闭，如果是，返回true，否者返回false
 func (c *Connection) isClose() bool {
-	c.rwLock.RLock()
-	defer c.rwLock.RUnlock()
-	return !c.status
+	return atomic.LoadInt32(&(c.status)) > 0
 }
 
 //关闭连接
 func (c *Connection) Close() {
-	if c.isClose() {
-		return
+	status := atomic.LoadInt32(&c.status)
+	if status == 1 {
+		if atomic.CompareAndSwapInt32(&c.status, 1, 0) {
+			(*c.Conn).Close()
+			//断开事件
+			c.submitEventPool(nil, EVENT_DISCONNECT, (*c.handler).ConnectionRemove, nil)
+		}
 	}
-	c.rwLock.Lock()
-	defer c.rwLock.Unlock()
-	c.status = false
-	(*c.Conn).Close()
-	//断开事件
-	c.submitEventPool(nil, EVENT_DISCONNECT, (*c.handler).ConnectionRemove, nil)
 
 }
 
@@ -50,40 +70,10 @@ func (c *Connection) submitEventPool(p *Pack, eType EVENTSTATUS, f func(e *Event
 	c.workerPool.Submit(&task)
 }
 
-// 创建新连接
-func NewConnection(conn *net.Conn, heartTime int, handler *Handler, pack *Pack, workerPool *WorkerPool) Connection {
-	return Connection{
-		Conn:       conn,
-		rwLock:     new(sync.RWMutex),
-		tmpData:    &swap{readBuff: make([]byte, 1024)},
-		heartTime:  heartTime,
-		lastTime:   time.Now().Unix(),
-		status:     true,
-		handler:    handler,
-		pack:       pack,
-		workerPool: workerPool,
-	}
-}
-
-// 临时交换区，存放解包后遗留的socket数据
-type swap struct {
-	len      uint32
-	readBuff []byte
-}
-
-/*更新最后请求时间 */
-func (c *Connection) lockUpdateLastTime() {
-	if c.heartTime > 0 {
-		c.rwLock.Lock()
-		defer c.rwLock.Unlock()
-		c.updateLastTime()
-	}
-}
-
 /*更新最后时间 */
 func (c *Connection) updateLastTime() {
 	if c.heartTime > 0 {
-		c.lastTime = time.Now().Unix()
+		atomic.StoreInt64(&(c.lastTime), time.Now().Unix())
 	}
 }
 
@@ -98,7 +88,8 @@ func (c *Connection) startHeartCheck() {
 func (c *Connection) heartCheck() {
 	log.Debug(" start heartCheck")
 	for !c.isClose() {
-		t := time.Now().Unix() - c.lastTime
+		lastTime := atomic.LoadInt64(&c.lastTime)
+		t := time.Now().Unix() - lastTime
 		it := int(t)
 		if it >= c.heartTime {
 			//执行心跳事件
@@ -111,8 +102,8 @@ func (c *Connection) heartCheck() {
 	log.Debug("close heartcheck")
 }
 
-/*读取协议包 */
-func readPack(c *Connection) (*[]Pack, error) {
+/*读取协议包,单线程读取，不需要使用锁 */
+func (c *Connection) readPack() (*[]Pack, error) {
 	for {
 		var buff [8096]byte
 		n, err := (*c.Conn).Read(buff[0:])
@@ -123,7 +114,7 @@ func readPack(c *Connection) (*[]Pack, error) {
 		}
 		if n > 0 {
 			//读取到数据,更新 心跳状态时间,解包数据
-			c.lockUpdateLastTime()
+			c.updateLastTime()
 			c.tmpData.readBuff = append(c.tmpData.readBuff[0:c.tmpData.len], buff[0:n]...)
 			c.tmpData.len += uint32(n)
 			ps, size, err := (*c.pack).Decode(&c.tmpData.readBuff, c.tmpData.len)
@@ -155,7 +146,6 @@ func (c *Connection) Send(p *Pack) error {
 
 		if err != nil {
 			c.submitEventPool(nil, EVENT_EXCEPTION, (*c.handler).HeartEvent, err)
-
 		} else {
 			c.updateLastTime()
 		}

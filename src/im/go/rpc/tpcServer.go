@@ -65,7 +65,7 @@ func (server *Server) listen(listen net.Listener) {
 /*处理读数据 */
 func readHandle(c *Connection) {
 	for {
-		ps, err := readPack(c)
+		ps, err := c.readPack()
 		if err != nil {
 			log.Error(err)
 			c.submitEventPool(nil, EVENT_EXCEPTION, (*c.handler).ExceptionHandle, err)

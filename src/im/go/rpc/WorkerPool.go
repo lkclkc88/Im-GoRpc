@@ -79,11 +79,11 @@ func (pool *WorkerPool) Submit(e *Task) bool {
 }
 
 func (pool *WorkerPool) GetTaskNum() uint32 {
-	return pool.taskNum
+	return atomic.LoadUint32(&pool.taskNum)
 }
 
 func (pool *WorkerPool) GetWorkerNum() uint32 {
-	return pool.workerNum
+	return atomic.LoadUint32(&pool.workerNum)
 }
 
 //修改任务数

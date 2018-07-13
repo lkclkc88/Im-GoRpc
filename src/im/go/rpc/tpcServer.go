@@ -3,6 +3,7 @@ package rpc
 import (
 	"errors"
 	"net"
+	"time"
 )
 
 //服务器
@@ -11,19 +12,18 @@ type Server struct {
 	HeartTime    int //心跳时间，单位秒，默认5秒
 	Handler      *Handler
 	Pack         *Pack
-	maxWorker    uint32 //最大执行worker,默认150个
-	maxQueueSize uint32 //最大等待队列数，默认1000
-
-	workerPool *WorkerPool
+	MaxWorker    uint32 //最大执行worker,默认150个
+	MaxQueueSize uint32 //最大等待队列数，默认1000
+	workerPool   *WorkerPool
+	//	AsyncReadWrite bool //异步读写
 }
 
 func NewServer() *Server {
-	return &Server{maxWorker: 150, HeartTime: 5, maxQueueSize: 1000}
+	return &Server{MaxWorker: 150, HeartTime: 5, MaxQueueSize: 1000}
 }
 
 /*开始服务端 */
 func (server *Server) InitServer() error {
-
 	if "" == server.Addr {
 		return errors.New("Addr can't be nil")
 	}
@@ -37,7 +37,7 @@ func (server *Server) InitServer() error {
 	ln, err := net.Listen("tcp", server.Addr)
 	if err == nil {
 		log.Info(" start server success")
-		server.workerPool = NewWorkerPool(server.maxQueueSize, server.maxWorker)
+		server.workerPool = NewWorkerPool(server.MaxQueueSize, server.MaxWorker)
 		go server.listen(ln)
 	} else {
 		log.Info(" start server failed")
@@ -51,35 +51,26 @@ func (server *Server) listen(listen net.Listener) {
 		conn, err := listen.Accept()
 		if err == nil {
 			log.Debug(" 建立链接  ", conn.RemoteAddr().String())
+			tcpConn, ok := conn.(*net.TCPConn)
+			if ok {
+				tcpConn.SetNoDelay(false)
+				tcpConn.SetWriteBuffer(1024 * 16)
+
+				if server.HeartTime > 0 {
+					tcpConn.SetKeepAlive(true)
+					tcpConn.SetKeepAlivePeriod(time.Duration(server.HeartTime+1) * time.Second)
+				} else {
+					tcpConn.SetKeepAlive(false)
+				}
+			}
 
 			c := NewConnection(&conn, server.HeartTime, server.Handler, server.Pack, server.workerPool)
 			c.startHeartCheck()
-			go readHandle(&c)
+			log.Info(" read Handler")
+			go c.readHandle()
 			//连接事件
 			c.submitEventPool(nil, EVENT_ESTABLISH, (*server.Handler).ConnectioHandle, nil)
 		}
 
-	}
-}
-
-/*处理读数据 */
-func readHandle(c *Connection) {
-	for {
-		ps, err := c.readPack()
-		if err != nil {
-			log.Error(err)
-			c.submitEventPool(nil, EVENT_EXCEPTION, (*c.handler).ExceptionHandle, err)
-			c.Close()
-			return
-		}
-		if nil == ps {
-			continue
-		}
-		i := 0
-		l := len(*ps)
-		for ; i < l; i++ {
-			//读事件
-			c.submitEventPool(&(*ps)[i], EVENT_READ, (*c.handler).HandleEvent, nil)
-		}
 	}
 }

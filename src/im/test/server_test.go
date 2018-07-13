@@ -7,7 +7,7 @@ package test
 //
 //func TestWorkerPool(t *testing.T) {
 //	StartLog("/lkclkc88/git/Im-GoRpc/logConfig.json")
-//	startServer()
+//	StartServer()
 //
 //	for {
 //		time.Sleep(24 * time.Hour)

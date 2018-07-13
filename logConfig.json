@@ -6,7 +6,7 @@
 		"debugFile": {
 			"appender": "file",
 			"name": "debugFile",
-			"fileName": "/home/java/logs/mongoProxy/server.log",
+			"fileName": "/home/lkclkc88/logs/mongoProxy/server.log",
 			"async": true,
 			"level": "DEBUG",
 			"bakLevel": 1

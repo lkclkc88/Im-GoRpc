@@ -3,6 +3,7 @@ package rpc
 import (
 	"runtime/debug"
 	atomic "sync/atomic"
+	"time"
 )
 
 func recoverErr() {
@@ -60,22 +61,40 @@ type WorkerPool struct {
 	queueSize    uint32     //最大队列数
 	maxWorkerNum uint32     //最大执行协程数
 	taskCh       chan *Task //事件channel，做队列事件
+	startTimer   uint32     //是否启动了timer，如果启动为1，否则为0
 }
 
 func NewWorkerPool(queueSize uint32, maxWorkerNum uint32) *WorkerPool {
 	return &WorkerPool{queueSize: queueSize, maxWorkerNum: maxWorkerNum, taskCh: make(chan *Task, queueSize)}
 }
 
+func (pool *WorkerPool) startWorkerTimer() {
+	startTime := atomic.LoadUint32(&pool.startTimer)
+	if startTime == 1 {
+		return
+	}
+	atomic.CompareAndSwapUint32(&pool.startTimer, 0, 1)
+}
+
+//控制工作流程
+func (pool *WorkerPool) controllerWorker() {
+	for {
+		if pool.decreaseWorker() {
+			time.Sleep(1 * time.Second) //如果工作线程能够减少，1秒钟之后，继续减少
+		} else {
+			time.Sleep(1 * time.Minute) //如果工作线程不能减少，等待1分钟后判断
+		}
+	}
+}
+
 //提交任务，如果线程池还存在空间，返回true,否者返回false
 func (pool *WorkerPool) Submit(e *Task) bool {
-	//	pool.increaseTaskNum()
 	pool.changeTaskNum(true)
+	pool.startWorkerTimer()
 	if !pool.increaseWorker(e) {
 		pool.taskCh <- e
 	}
 	return true
-	//	}
-	//	return false
 }
 
 func (pool *WorkerPool) GetTaskNum() uint32 {
@@ -102,33 +121,6 @@ func (pool *WorkerPool) changeTaskNum(increase bool) {
 
 	}
 }
-
-////增长任务数，当前任务数小于队列数+最大协成数时，返回true,否者返回false
-//func (pool *WorkerPool) increaseTaskNum() bool {
-//	for {
-//		taskNum := atomic.LoadUint32(&pool.taskNum)
-//		if taskNum < (pool.queueSize + pool.maxWorkerNum) {
-//			if atomic.CompareAndSwapUint32(&pool.taskNum, taskNum, taskNum+1) {
-//				return true
-//			}
-//		} else {
-//			return false
-//		}
-//	}
-//}
-//
-//func (pool *WorkerPool) decreaseTaskNum() bool {
-//	for {
-//		taskNum := atomic.LoadUint32(&pool.taskNum)
-//		if taskNum < (pool.queueSize + pool.maxWorkerNum) {
-//			if atomic.CompareAndSwapUint32(&pool.taskNum, taskNum, taskNum-1) {
-//				return true
-//			}
-//		} else {
-//			return false
-//		}
-//	}
-//}
 
 //增长工作协成
 func (pool *WorkerPool) increaseWorker(task *Task) bool {
@@ -165,7 +157,6 @@ func (pool *WorkerPool) decreaseWorker() bool {
 }
 
 func (pool *WorkerPool) afterExecuteTask(task *Task) {
-	//	pool.decreaseTaskNum()
 	pool.changeTaskNum(false)
-	pool.decreaseWorker()
+	//	pool.decreaseWorker()
 }

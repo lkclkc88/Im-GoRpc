@@ -74,6 +74,7 @@ func (pool *WorkerPool) startWorkerTimer() {
 		return
 	}
 	atomic.CompareAndSwapUint32(&pool.startTimer, 0, 1)
+	pool.controllerWorker()
 }
 
 //控制工作流程

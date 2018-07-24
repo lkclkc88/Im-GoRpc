@@ -8,7 +8,6 @@ import (
 	"sync"
 	atomic "sync/atomic"
 	"time"
-	//	"unsafe"
 )
 
 var swap_cache_size int = 1024 * 8
@@ -57,10 +56,8 @@ type Connection struct {
 	workerPool *WorkerPool   //执行工作池
 	readDataCh chan *[]byte  //读数据队列
 	asyncWrite bool          //异步写
-	//	asyncWriteNum uint32        //异步写数量
-	//	writeDataCh   chan *[]byte  //写数据缓存
-	reader *bufio.Reader
-	writer *bufio.Writer
+	reader     *bufio.Reader
+	writer     *bufio.Writer
 }
 
 // 创建新连接
@@ -78,17 +75,12 @@ func NewConnection(conn *net.Conn, heartTime int, handler *Handler, pack *Pack, 
 		readDataCh: make(chan *[]byte, 1000),
 		reader:     bufio.NewReaderSize(*conn, 4096),
 		writer:     bufio.NewWriterSize(*conn, 4096),
-		//		asyncWrite:  asyncWrite,
-		//		writeDataCh: make(chan *[]byte, 1000),
 	}
-	//	if tmp.asyncWrite {
-	//		go tmp.asyncWriteData()
-	//	}
 	return &tmp
 }
 
 //判断连接是否关闭，如果是，返回true，否者返回false
-func (c *Connection) isClose() bool {
+func (c *Connection) IsClose() bool {
 	return atomic.LoadInt32(&(c.status)) == 0
 }
 
@@ -144,7 +136,7 @@ func (c *Connection) startHeartCheck() {
 // 心跳检查
 func (c *Connection) heartCheck() {
 	log.Debug(" start heartCheck")
-	for !c.isClose() {
+	for !c.IsClose() {
 		lastTime := atomic.LoadInt64(&c.lastTime)
 		t := time.Now().Unix() - lastTime
 		it := int(t)
@@ -190,7 +182,7 @@ func (c *Connection) read() {
 }
 
 func (c *Connection) readPack() (*[]Pack, error) {
-	for !c.isClose() {
+	for !c.IsClose() {
 		tmp := <-c.readDataCh
 		if nil != tmp {
 			c.tmpData.appendByte(tmp)
@@ -215,7 +207,7 @@ func (c *Connection) readPack() (*[]Pack, error) {
 func (c *Connection) readHandle() {
 	log.Info(" read Handler")
 	go c.read()
-	for !c.isClose() {
+	for !c.IsClose() {
 		ps, err := c.readPack()
 		if err != nil {
 			log.Error(err)
@@ -244,46 +236,11 @@ func Open(addr string) (*bufio.ReadWriter, error) {
 	return bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
 }
 
-//性能无提示，放弃异步写数据
-//func (c *Connection) asyncWriteData() {
-//	buff := bufio.NewWriter(*c.Conn)
-//	for !c.isClose() {
-//		tmp := <-c.writeDataCh
-//		if nil != tmp {
-//			buff.Write(*tmp)
-//			num := atomic.LoadUint32(&c.asyncWriteNum)
-//			var x uint32 = 0
-//			if num > 1 {
-//				for x < num && buff.Buffered() < swap_cache_size {
-//					x++
-//					t := <-c.writeDataCh
-//					if nil != t {
-//						buff.Write(*tmp)
-//					} else {
-//						buff.Flush()
-//						return
-//					}
-//				}
-//
-//			}
-//			buff.Flush()
-//			atomic.AddUint32(&c.asyncWriteNum, -x-1)
-//		}
-//	}
-//}
-//
-//func (c *Connection) asyncSend(p *Pack) {
-//	log.Info("asyncSend")
-//	data := (*p).Encode()
-//	atomic.AddUint32(&c.asyncWriteNum, 1)
-//	c.writeDataCh <- &data
-//}
-
 /*
 发送数据
 */
 func (c *Connection) Send(p *Pack) error {
-	if !c.isClose() {
+	if !c.IsClose() {
 		data := (*p).Encode()
 		_, err := (*c.Conn).Write(data)
 		if err != nil {

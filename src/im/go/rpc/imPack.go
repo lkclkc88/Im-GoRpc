@@ -10,7 +10,7 @@ const MAX_SIZE = 10214 * 1024
 /*
 协议头
 */
-type Header struct {
+type ImPackHeader struct {
 	Len uint32 // 请求长度，包含协议头，以及协议body
 	Cmd uint32 //协议号
 	Seq uint32 //请求唯一标识
@@ -21,7 +21,7 @@ type Header struct {
 	Uid uint64 //发送人uid
 }
 
-func (h *Header) Change() {
+func (h *ImPackHeader) Change() {
 	tmp := h.Scd
 	h.Scd = h.Rcd
 	h.Rcd = tmp
@@ -60,7 +60,7 @@ func ByteToUInt64(buff []byte) uint64 {
 /**
 将header转换为[]byte
 */
-func (header *Header) encode() []byte {
+func (header *ImPackHeader) encode() []byte {
 	var buffer [40]byte
 	Uint32ToByte(header.Len, buffer[:4])
 	Uint32ToByte(header.Cmd, buffer[4:8])
@@ -76,8 +76,8 @@ func (header *Header) encode() []byte {
 /*
 将byte数组解析为header
 */
-func decodeHeader(buff []byte) Header {
-	var header Header
+func decodeHeader(buff []byte) *ImPackHeader {
+	var header ImPackHeader
 	header.Len = ByteToUInt32(buff[:4])
 	header.Cmd = ByteToUInt32(buff[4:8])
 	header.Seq = ByteToUInt32(buff[8:12])
@@ -86,15 +86,15 @@ func decodeHeader(buff []byte) Header {
 	header.Sid = ByteToUInt32(buff[20:24])
 	header.Cid = ByteToUInt64(buff[24:32])
 	header.Uid = ByteToUInt64(buff[32:40])
-	return header
+	return &header
 }
 
 /*
 * 协议
  */
 type ImPack struct {
-	Header Header //协议头
-	Body   []byte //协议内容
+	Header *ImPackHeader //协议头
+	Body   []byte        //协议内容
 }
 
 func decode(buffer *[]byte, len uint32) (ImPack, uint32, error) {

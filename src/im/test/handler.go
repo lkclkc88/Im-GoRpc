@@ -1,6 +1,5 @@
 package test
 
-//
 //import (
 //	//	"github.com/lkclkc88/Im-GoRpc/src/im/go/rpc"
 //	//	"encoding/json"

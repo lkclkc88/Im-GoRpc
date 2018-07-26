@@ -79,6 +79,15 @@ func NewConnection(conn *net.Conn, heartTime int, handler *Handler, pack *Pack, 
 	return &tmp
 }
 
+//启动连接
+func (c *Connection) start() {
+	c.startHeartCheck()
+	log.Info(" read Handler")
+	go c.readHandle()
+	//连接事件
+	c.submitEventPool(nil, EVENT_ESTABLISH, (*c.handler).ConnectioHandle, nil)
+}
+
 //判断连接是否关闭，如果是，返回true，否者返回false
 func (c *Connection) IsClose() bool {
 	return atomic.LoadInt32(&(c.status)) == 0

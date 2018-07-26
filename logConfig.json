@@ -14,12 +14,12 @@
 	},
 	"loggers": [{
 			"name": "root",
-			"level": "INFO",
+			"level": "DEBUG",
 			"appenders": [ "debugFile","console"]
 		},
 		{
 			"name": "im",
-			"level": "INFO",
+			"level": "DEBUG",
 			"appenders": ["debugFile","console"]
 		}
 	]

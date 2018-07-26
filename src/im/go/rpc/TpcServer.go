@@ -65,11 +65,12 @@ func (server *Server) listen(listen net.Listener) {
 			}
 
 			c := NewConnection(&conn, server.HeartTime, server.Handler, server.Pack, server.workerPool)
-			c.startHeartCheck()
-			log.Info(" read Handler")
-			go c.readHandle()
-			//连接事件
-			c.submitEventPool(nil, EVENT_ESTABLISH, (*server.Handler).ConnectioHandle, nil)
+			c.start()
+			//			c.startHeartCheck()
+			//			log.Info(" read Handler")
+			//			go c.readHandle()
+			//			//连接事件
+			//			c.submitEventPool(nil, EVENT_ESTABLISH, (*server.Handler).ConnectioHandle, nil)
 		}
 
 	}

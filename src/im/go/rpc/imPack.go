@@ -97,6 +97,10 @@ type ImPack struct {
 	Body   []byte        //协议内容
 }
 
+func NewImPack() *ImPack {
+	return &ImPack{Header: &ImPackHeader{}}
+}
+
 func decode(buffer *[]byte, len uint32) (ImPack, uint32, error) {
 	var readSize uint32
 	var p ImPack

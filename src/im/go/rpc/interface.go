@@ -21,4 +21,5 @@ type Handler interface {
 type Pack interface {
 	Encode() []byte                                             //将包数据编码为byte
 	Decode(buffer *[]byte, size uint32) ([]Pack, uint32, error) //批量解包
+	GetUniqueId() interface{}                                   //用户包数据的唯一id，在http这种request,response模式的请求下，需要通过这个唯一id来对应request和response
 }

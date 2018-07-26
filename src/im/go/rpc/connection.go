@@ -56,8 +56,8 @@ type Connection struct {
 	workerPool *WorkerPool   //执行工作池
 	readDataCh chan *[]byte  //读数据队列
 	asyncWrite bool          //异步写
-	reader     *bufio.Reader
-	writer     *bufio.Writer
+	reader     *bufio.Reader //读缓冲
+	syncReq    *ReqSync      //同步请求的map
 }
 
 // 创建新连接
@@ -74,7 +74,7 @@ func NewConnection(conn *net.Conn, heartTime int, handler *Handler, pack *Pack, 
 		workerPool: workerPool,
 		readDataCh: make(chan *[]byte, 1000),
 		reader:     bufio.NewReaderSize(*conn, 4096),
-		writer:     bufio.NewWriterSize(*conn, 4096),
+		syncReq:    NewReqSync(),
 	}
 	return &tmp
 }
@@ -108,6 +108,14 @@ func (c *Connection) Close() {
 
 //提交到事件池
 func (c *Connection) submitEventPool(p *Pack, eType EVENTSTATUS, f func(e *Event, err error), err error) {
+
+	seq := (*p).GetUniqueId()
+	if nil != seq {
+		var obj interface{} = *p
+		if c.syncReq.ResponseSyncReq(seq, &obj) {
+			return
+		}
+	}
 	event := NewEvent(eType, c, p)
 	eventTask := NewEventTask(event, f, err)
 	var task Task = *eventTask
@@ -260,6 +268,32 @@ func (c *Connection) Send(p *Pack) error {
 		return err
 	} else {
 		return errors.New("connector is close")
+	}
+
+}
+
+// 同步发送
+func (c *Connection) SyncSend(p *Pack, timeOut time.Duration) (*Pack, error) {
+	seq := (*p).GetUniqueId()
+	if nil == seq {
+		return nil, errors.New("pack not uniqueId ,can't use the method")
+	}
+	if !c.IsClose() {
+		c.syncReq.SetSync(seq)
+
+		data := (*p).Encode()
+
+		_, err := (*c.Conn).Write(data)
+		if err != nil {
+			c.submitEventPool(nil, EVENT_EXCEPTION, (*c.handler).HeartEvent, err)
+		} else {
+			c.updateLastTime()
+		}
+		result := c.syncReq.SyncReq(seq, timeOut)
+		p := (*result).(*Pack)
+		return p, err
+	} else {
+		return nil, errors.New("connector is close")
 	}
 
 }

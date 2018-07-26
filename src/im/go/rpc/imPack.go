@@ -3,22 +3,9 @@ package rpc
 import (
 	"encoding/binary"
 	"errors"
-	"sync/atomic"
-	"time"
 )
 
 const MAX_SIZE = 10214 * 1024
-
-var seq_index uint32 = 0
-var seq_tmp uint32 = (1 << 27) - 1
-
-//构建seq，seq用于请求唯一标示，并且在同一个socket中使用，因此只需要保证几秒内数据不重复即可,因此保证1分钟内数据不重复
-func BuildSeq() uint32 {
-	index := atomic.AddUint32(&seq_index, 1)
-	now := time.Now()
-	result := uint32((now.Second() << 26)) + (index & seq_tmp)
-	return uint32(result)
-}
 
 /*
 协议头
@@ -174,4 +161,10 @@ func (p ImPack) Decode(buffer *[]byte, size uint32) ([]Pack, uint32, error) {
 		}
 
 	}
+}
+func (c ImPack) GetUniqueId() interface{} {
+	if nil != c.Header {
+		return c.Header.Seq
+	}
+	return nil
 }

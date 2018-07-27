@@ -108,12 +108,13 @@ func (c *Connection) Close() {
 
 //提交到事件池
 func (c *Connection) submitEventPool(p *Pack, eType EVENTSTATUS, f func(e *Event, err error), err error) {
-
-	seq := (*p).GetUniqueId()
-	if nil != seq {
-		var obj interface{} = *p
-		if c.syncReq.ResponseSyncReq(seq, &obj) {
-			return
+	if nil != p && eType == EVENT_READ {
+		seq := (*p).GetUniqueId()
+		if nil != seq {
+			var obj interface{} = p
+			if c.syncReq.ResponseSyncReq(seq, &obj) {
+				return
+			}
 		}
 	}
 	event := NewEvent(eType, c, p)
@@ -133,12 +134,11 @@ func (c *Connection) updateLastTime() {
 				break
 			}
 			if atomic.CompareAndSwapInt64(&c.lastTime, lastTime, currentTime) {
+				var conn net.Conn = *(c.Conn)
+				conn.SetDeadline(time.Now().Add(time.Duration(c.heartTime) * time.Second))
 				break
 			}
 		}
-
-		var conn net.Conn = *(c.Conn)
-		conn.SetDeadline(time.Now().Add(time.Duration(c.heartTime) * time.Second))
 	}
 }
 
@@ -175,6 +175,7 @@ func (c *Connection) read() {
 		n, err := c.reader.Read(buff)
 		if err != nil {
 			str := err.Error()
+			//心跳超时
 			if strings.Contains(str, "timeout") {
 				//读超时，出发心跳时间
 				c.submitEventPool(nil, EVENT_HEART, (*c.handler).HeartEvent, nil)
@@ -184,8 +185,9 @@ func (c *Connection) read() {
 			}
 			// 读取数据异常，触发异常时间
 			log.Error(str)
-			c.submitEventPool(nil, EVENT_HEART, (*c.handler).ExceptionHandle, nil)
+			c.submitEventPool(nil, EVENT_EXCEPTION, (*c.handler).ExceptionHandle, nil)
 			c.Close()
+			//关闭读取channel
 			c.readDataCh <- nil
 			return
 		}
@@ -198,6 +200,7 @@ func (c *Connection) read() {
 	}
 }
 
+//读取数据包
 func (c *Connection) readPack() (*[]Pack, error) {
 	for !c.IsClose() {
 		tmp := <-c.readDataCh
@@ -222,7 +225,7 @@ func (c *Connection) readPack() (*[]Pack, error) {
 
 /*处理读数据 */
 func (c *Connection) readHandle() {
-	log.Info(" read Handler")
+	log.Debug(" start read Handler")
 	go c.read()
 	for !c.IsClose() {
 		ps, err := c.readPack()
@@ -244,15 +247,6 @@ func (c *Connection) readHandle() {
 	}
 }
 
-func Open(addr string) (*bufio.ReadWriter, error) {
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		return nil, nil
-	}
-	// 将net.Conn对象包装到bufio.ReadWriter中
-	return bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn)), nil
-}
-
 /*
 发送数据
 */
@@ -272,13 +266,14 @@ func (c *Connection) Send(p *Pack) error {
 
 }
 
-// 同步发送
+// 同步发送，同步发送会跳过 handler处理步骤。
 func (c *Connection) SyncSend(p *Pack, timeOut time.Duration) (*Pack, error) {
 	seq := (*p).GetUniqueId()
 	if nil == seq {
 		return nil, errors.New("pack not uniqueId ,can't use the method")
 	}
 	if !c.IsClose() {
+		//设置id到同步器
 		c.syncReq.SetSync(seq)
 
 		data := (*p).Encode()
@@ -289,9 +284,15 @@ func (c *Connection) SyncSend(p *Pack, timeOut time.Duration) (*Pack, error) {
 		} else {
 			c.updateLastTime()
 		}
+		//冲同步器中获取参数
 		result := c.syncReq.SyncReq(seq, timeOut)
-		p := (*result).(*Pack)
-		return p, err
+		if nil != result {
+			p := (*result).(*Pack)
+			return p, err
+		} else {
+			//返回获取返回数据超时
+			return nil, errors.New(" get response timeOut")
+		}
 	} else {
 		return nil, errors.New("connector is close")
 	}

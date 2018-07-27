@@ -92,7 +92,9 @@ func (c *ClientPool) connectClient(config *ClientConfig) *Connection {
 		return nil
 	}
 	result := NewConnection(&conn, config.HeartTime, c.handler, c.Pack, c.workerPool)
+	log.Debug("start start")
 	result.start()
+	log.Debug("start end")
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.clientMap[config] = result
@@ -218,17 +220,48 @@ func (c *ClientPool) Send(pack *Pack) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	i := 0
+	size := len(c.Conns)
+	for i < 5 && i < size {
+		num := rand.Uint32()
+		index := int(num) % size
+		conn := c.Conns[index]
+		if !conn.IsClose() {
+			err := conn.Send(pack)
+			if nil == err {
+				return
+			} else {
+				log.Error(err)
+			}
+		}
+		i++
+	}
+}
+
+//同步发送消息
+func (c *ClientPool) SyncSend(pack *Pack, timeOut time.Duration) *Pack {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	i := 0
 	for i < 5 {
 		num := rand.Uint32()
 		index := int(num) % len(c.Conns)
 		conn := c.Conns[index]
 		if !conn.IsClose() {
-			conn.Send(pack)
-			break
-		} else {
-			i++
+			r, e := conn.SyncSend(pack, timeOut)
+			if nil != e {
+				log.Error(e)
+				if strings.Contains(e.Error(), "timeOut") {
+					return nil
+				}
+			} else {
+				return r
+			}
 		}
+		i++
+
 	}
+	log.Warn(" can't find client connection")
+	return nil
 }
 
 //客户端handler

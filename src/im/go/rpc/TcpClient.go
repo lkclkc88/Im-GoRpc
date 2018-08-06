@@ -8,34 +8,44 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	//	"container/list"
 )
 
 //客户端配置信息
 type ClientConfig struct {
+	Id        string //id
 	Host      string //主机名
 	Port      int    //端口
 	HeartTime int    //心跳时间
 	Weight    uint8  //权重。默认1
+	status    uint32 //状态，0是有效状态，1是无效状态，应对删除的情况，默认0，
+}
 
-	status uint32 //状态，0是有效状态，1是无效状态，应对删除的情况，默认0，
+func (c *ClientConfig) GetId() string {
+	if "" != c.Id {
+		return c.Id
+	} else {
+
+		return c.Host + ":" + strconv.Itoa(c.Port)
+	}
 }
 
 //tcp客户端池
 type ClientPool struct {
 	lock          sync.RWMutex
-	Configs       []*ClientConfig    //配置
-	Status        int                //状态，1 运行中，0未运行，2关闭
-	Conns         []*Connection      //链接
-	ClientHandler *ClientHandler     //处理器
-	handler       *Handler           //处理器，实现断线重连逻辑
-	Pack          *Pack              //协议包类，支持编码，解码包数据
-	MaxWorker     uint32             //最大执行worker,默认150个
-	MaxQueueSize  uint32             //最大等待队列数，默认1000
-	workerPool    *WorkerPool        //工作协程池
-	connTimeOut   time.Duration      //连接超时
-	reConnCh      chan *ClientConfig //重连客户端配置队列
+	Configs       []*ClientConfig               //配置
+	Status        int                           //状态，1 运行中，0未运行，2关闭
+	Conns         map[*ClientConfig]*Connection //链接
+	connList      []*Connection                 //连接列表，只包含可用的连接
+	ClientHandler *ClientHandler                //处理器
+	handler       *Handler                      //处理器，实现断线重连逻辑
+	Pack          *Pack                         //协议包类，支持编码，解码包数据
+	MaxWorker     uint32                        //最大执行worker,默认150个
+	MaxQueueSize  uint32                        //最大等待队列数，默认1000
+	workerPool    *WorkerPool                   //工作协程池
+	connTimeOut   time.Duration                 //连接超时
+	reConnCh      chan *ClientConfig            //重连客户端配置队列
 
-	clientMap map[*ClientConfig]*Connection //客户端配置与连接映射关系
 }
 
 //构建tcp客户端
@@ -61,8 +71,8 @@ func (c *ClientPool) InitClient() bool {
 
 	c.workerPool = NewWorkerPool(c.MaxQueueSize, c.MaxWorker)
 	c.reConnCh = make(chan *ClientConfig, len(c.Configs))
-	c.clientMap = make(map[*ClientConfig]*Connection)
-	c.Conns = make([]*Connection, 0)
+	c.Conns = make(map[*ClientConfig]*Connection)
+	c.connList = make([]*Connection, 0)
 	c.batchConn()
 
 	return true
@@ -97,27 +107,13 @@ func (c *ClientPool) connectClient(config *ClientConfig) *Connection {
 	log.Debug("start end")
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.clientMap[config] = result
-	c.Conns = append(c.Conns, result)
+	c.Conns[config] = result
+	c.connList = append(c.connList, result)
 	return result
-}
-
-//延迟重试
-func (c *ClientPool) lazyReconn(ch chan *ClientConfig) {
-	for {
-		tmp := <-ch
-		status := atomic.LoadUint32(&(tmp.status))
-		if status == 0 { //判断连接是否已经移除
-			time.Sleep(3 * time.Second)
-			c.reConnCh <- tmp
-		}
-	}
 }
 
 // 重连
 func (c *ClientPool) reConnAll() {
-	lazyCh := make(chan *ClientConfig, len(c.Configs))
-	go c.lazyReconn(lazyCh)
 	for {
 		tmp := <-c.reConnCh
 		if nil != tmp {
@@ -126,8 +122,11 @@ func (c *ClientPool) reConnAll() {
 				log.Debug("  reconn  ", tmp.Host, tmp.Port, tmp)
 				con := c.connectClient(tmp)
 				if nil == con {
-					//重连失败，放入延迟重试队列
-					lazyCh <- tmp
+					//重连失败，延迟3秒重新放入队列
+					go func() {
+						time.Sleep(3 * time.Second)
+						c.reConnCh <- tmp
+					}()
 				}
 			} else {
 				log.Debug(" config is delete ,don't reconn", tmp)
@@ -136,16 +135,11 @@ func (c *ClientPool) reConnAll() {
 	}
 }
 
-//删除连接
+//删除连接,ton
 func (c *ClientPool) deleteConnection(con *Connection) {
 	for i, v := range c.Conns {
 		if v == con {
-			size := len(c.Conns)
-			if i == size-1 {
-				c.Conns = c.Conns[:i]
-			} else {
-				c.Conns = append(c.Conns[:i], c.Conns[i+1:]...)
-			}
+			c.RemoveConfig(i)
 		}
 	}
 }
@@ -154,12 +148,10 @@ func (c *ClientPool) deleteConnection(con *Connection) {
 func (c *ClientPool) ReConn(conn *Connection) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	//从列表中删除连接
-	c.deleteConnection(conn)
 	//通过connection查找到客户端配置信息，将配置信息发送到重连队列中
-	for k, v := range c.clientMap {
+	for k, v := range c.Conns {
 		if v == conn {
-			delete(c.clientMap, k)
+			delete(c.Conns, k)
 			c.reConnCh <- k
 			break
 		}
@@ -167,16 +159,41 @@ func (c *ClientPool) ReConn(conn *Connection) {
 }
 
 //删除配置
-func (c *ClientPool) deleteConfig(config *ClientConfig) *ClientConfig {
+func (c *ClientPool) RemoveConfig(config *ClientConfig) *ClientConfig {
+	if config == nil {
+		return nil
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	i, size := 0, len(c.Configs)
+	id := config.GetId()
 	for ; i < size; i++ {
 		v := c.Configs[i]
-		if strings.EqualFold(v.Host, config.Host) && v.Port == config.Port {
+		if v.GetId() == id {
+			//删除config
 			if i+1 < size {
 				c.Configs = append(c.Configs[:i], c.Configs[i+1:]...)
 			} else {
 				c.Configs = c.Configs[:i]
 			}
+			v.status = 1
+
+			conn := c.Conns[v]
+			//删除映射关系
+			delete(c.Conns, v)
+
+			//从连接列表中删除
+			length := len(c.connList)
+			for index, tmp := range c.connList {
+				if tmp == conn {
+					if index+1 < length {
+						c.connList = append(c.connList[:index], c.connList[index+1:]...)
+					} else {
+						c.connList = c.connList[:index]
+					}
+				}
+			}
+
 			return v
 		}
 	}
@@ -184,84 +201,80 @@ func (c *ClientPool) deleteConfig(config *ClientConfig) *ClientConfig {
 	return nil
 }
 
-//移除配置，应对删除节点的情况，根据host,port确定服务
-func (c *ClientPool) RemoveConfig(config *ClientConfig) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	log.Debug(c.clientMap, " --- ", c.Configs, " --- ", c.Conns)
-	config = c.deleteConfig(config)
-	if nil != config {
-		log.Debug(" remove  ", config)
-		atomic.CompareAndSwapUint32(&config.status, 0, 1)
-		delete(c.clientMap, config)
-	}
-}
-
 //添加配置
 func (c *ClientPool) AddConfig(config *ClientConfig) {
-	exists := false
+	//先从配置中删除
+	c.RemoveConfig(config)
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	for _, v := range c.Configs {
-		if strings.EqualFold(v.Host, config.Host) && v.Port == config.Port {
-			exists = true
+	//然后将新的配置加入到
+	c.Configs = append(c.Configs, config)
+	c.reConnCh <- config
+}
+
+func (c *ClientPool) getRangeConn() *Connection {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	size := len(c.Conns)
+	i := 0
+	num := rand.Uint32()
+	for i < size {
+		index := int(num) % size
+		conn := c.connList[index]
+		if !conn.IsClose() {
+			return conn
 		}
+		i++
+		num++
 	}
-	if !exists {
-		c.Configs = append(c.Configs, config)
-		c.reConnCh <- config
-	} else {
-		log.Debug(" exists config ", config)
-	}
+	return nil
 }
 
 //发送消息
 func (c *ClientPool) Send(pack *Pack) {
+
+	conn := c.getRangeConn()
+	if nil != conn {
+		conn.Send(pack)
+	}
+}
+
+//发送到所有客户端，应对消息广播的请情况
+func (c *ClientPool) SendAll(pack *Pack) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	i := 0
-	size := len(c.Conns)
-	for i < 5 && i < size {
-		num := rand.Uint32()
-		index := int(num) % size
-		conn := c.Conns[index]
-		if !conn.IsClose() {
-			err := conn.Send(pack)
-			if nil == err {
-				return
-			} else {
+	for _, v := range c.Conns {
+		if !v.IsClose() {
+			err := v.Send(pack)
+			if nil != err {
 				log.Error(err)
 			}
 		}
-		i++
 	}
+
+}
+
+func (c *ClientPool) SyncSendAndReturnConn(pack *Pack, timeOut time.Duration) (*Pack, *Connection) {
+	conn := c.getRangeConn()
+	if nil != conn {
+		r, e := conn.SyncSend(pack, timeOut)
+		if nil != e {
+			log.Error(e)
+			if strings.Contains(e.Error(), "timeOut") {
+				return nil, nil
+			}
+		} else {
+			return r, conn
+		}
+	}
+	log.Warn(" can't find client connection")
+	return nil, nil
 }
 
 //同步发送消息
 func (c *ClientPool) SyncSend(pack *Pack, timeOut time.Duration) *Pack {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-	i := 0
-	for i < 5 {
-		num := rand.Uint32()
-		index := int(num) % len(c.Conns)
-		conn := c.Conns[index]
-		if !conn.IsClose() {
-			r, e := conn.SyncSend(pack, timeOut)
-			if nil != e {
-				log.Error(e)
-				if strings.Contains(e.Error(), "timeOut") {
-					return nil
-				}
-			} else {
-				return r
-			}
-		}
-		i++
-
-	}
-	log.Warn(" can't find client connection")
-	return nil
+	result, _ := c.SyncSendAndReturnConn(pack, timeOut)
+	return result
 }
 
 //客户端handler
@@ -275,6 +288,8 @@ type ClientHandler interface {
 
 	// 异常处理
 	ExceptionHandle(e *Event, err error)
+	//连接移除
+	ConnectionRemove(e *Event, err error)
 }
 
 //客户端默认处理器，处理了断线重连的情况

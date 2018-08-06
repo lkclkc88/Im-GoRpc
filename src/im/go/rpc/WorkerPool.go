@@ -9,7 +9,10 @@ import (
 func recoverErr() {
 	if err := recover(); err != nil {
 		log.Error(err)
-		log.Error(string(debug.Stack()))
+		buff := debug.Stack()
+		if nil != buff {
+			log.Error(string(debug.Stack()))
+		}
 	}
 }
 

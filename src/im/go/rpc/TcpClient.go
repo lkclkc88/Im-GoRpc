@@ -21,13 +21,21 @@ type ClientConfig struct {
 	status    uint32 //状态，0是有效状态，1是无效状态，应对删除的情况，默认0，
 }
 
+//获取客户端配置的唯一id
 func (c *ClientConfig) GetId() string {
 	if "" != c.Id {
 		return c.Id
 	} else {
-
 		return c.Host + ":" + strconv.Itoa(c.Port)
 	}
+}
+
+//判断客户端配置是否相等
+func (c *ClientConfig) Equals(c1 *ClientConfig) bool {
+	if nil != c1 {
+		return c1.GetId() == c.GetId() && c1.status == c.status && c1.HeartTime == c.HeartTime && c1.Host == c.Host && c.Port == c1.Port && c1.Weight == c.Weight
+	}
+	return false
 }
 
 //tcp客户端池
@@ -116,7 +124,7 @@ func (c *ClientPool) connectClient(config *ClientConfig) *Connection {
 func (c *ClientPool) reConnAll() {
 	for {
 		tmp := <-c.reConnCh
-		if nil != tmp {
+		if nil != tmp && tmp.status == 0 {
 			status := atomic.LoadUint32(&(tmp.status))
 			if status == 0 {
 				log.Debug("  reconn  ", tmp.Host, tmp.Port, tmp)
@@ -149,10 +157,17 @@ func (c *ClientPool) ReConn(conn *Connection) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	//通过connection查找到客户端配置信息，将配置信息发送到重连队列中
+
+	log.Debug(" config status ", c.Conns)
 	for k, v := range c.Conns {
 		if v == conn {
 			delete(c.Conns, k)
-			c.reConnCh <- k
+			if k.status == 0 {
+				//客户端配置状态为有效状态时，才进行重连
+				c.reConnCh <- k
+			} else {
+				log.Debug(" config status ", k.status, " don't  reconn")
+			}
 			break
 		}
 	}
@@ -179,19 +194,23 @@ func (c *ClientPool) RemoveConfig(config *ClientConfig) *ClientConfig {
 			v.status = 1
 
 			conn := c.Conns[v]
-			//删除映射关系
-			delete(c.Conns, v)
-
-			//从连接列表中删除
-			length := len(c.connList)
-			for index, tmp := range c.connList {
-				if tmp == conn {
-					if index+1 < length {
-						c.connList = append(c.connList[:index], c.connList[index+1:]...)
-					} else {
-						c.connList = c.connList[:index]
+			if nil != conn {
+				//删除映射关系
+				delete(c.Conns, v)
+				//从连接列表中删除
+				length := len(c.connList)
+				for index, tmp := range c.connList {
+					if tmp == conn {
+						if index+1 < length {
+							c.connList = append(c.connList[:index], c.connList[index+1:]...)
+						} else {
+							c.connList = c.connList[:index]
+						}
 					}
 				}
+				log.Debug(" close connection", conn)
+				//关闭连接
+				conn.Close()
 			}
 
 			return v
@@ -203,6 +222,19 @@ func (c *ClientPool) RemoveConfig(config *ClientConfig) *ClientConfig {
 
 //添加配置
 func (c *ClientPool) AddConfig(config *ClientConfig) {
+
+	i, size := 0, len(c.Configs)
+	id := config.GetId()
+	for ; i < size; i++ {
+		v := c.Configs[i]
+		if v.GetId() == id {
+			if v.Equals(config) {
+				log.Debug("client config is exists not add")
+				//数据相等，不修改数据
+				return
+			}
+		}
+	}
 	//先从配置中删除
 	c.RemoveConfig(config)
 	c.lock.Lock()

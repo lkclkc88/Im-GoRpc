@@ -19,6 +19,7 @@ type swap struct {
 	capacity int
 }
 
+//加载数据到临时交换区
 func (s *swap) appendByte(buff *[]byte) {
 	if nil != buff {
 		b := *buff
@@ -37,6 +38,7 @@ func (s *swap) appendByte(buff *[]byte) {
 	}
 }
 
+//从交换区删除固定长度
 func (s *swap) deleteByte(n uint32) {
 	s.capacity = s.capacity - int(n)
 	s.size = s.size - int(n)

@@ -208,9 +208,12 @@ func (c *ClientPool) RemoveConfig(config *ClientConfig) *ClientConfig {
 						}
 					}
 				}
-				log.Debug(" close connection", conn)
-				//关闭连接
-				conn.Close()
+				go func() {
+					time.Sleep(3 * time.Second)
+					log.Debug(" close connection", (*conn.Conn).RemoteAddr())
+					//关闭连接
+					conn.Close()
+				}()
 			}
 
 			return v
@@ -220,20 +223,28 @@ func (c *ClientPool) RemoveConfig(config *ClientConfig) *ClientConfig {
 	return nil
 }
 
-//添加配置
-func (c *ClientPool) AddConfig(config *ClientConfig) {
-
+func (c *ClientPool) isExists(config *ClientConfig) bool {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
 	i, size := 0, len(c.Configs)
 	id := config.GetId()
 	for ; i < size; i++ {
 		v := c.Configs[i]
 		if v.GetId() == id {
 			if v.Equals(config) {
-				log.Debug("client config is exists not add")
 				//数据相等，不修改数据
-				return
+				return true
 			}
 		}
+	}
+	return false
+}
+
+//添加配置
+func (c *ClientPool) AddConfig(config *ClientConfig) {
+	if c.isExists(config) {
+		log.Debug("client config is exists not add")
+		return
 	}
 	//先从配置中删除
 	c.RemoveConfig(config)

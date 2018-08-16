@@ -14,10 +14,6 @@ type ReqSync struct {
 }
 
 func NewReqSync() *ReqSync {
-	//	method := func() *interface{} {
-	//		var obj interface{} = make(chan *interface{}, 1)
-	//		return &obj
-	//	}
 	return &ReqSync{store: new(sync.Map), pool: newPool(uint32(1000), newReqQueue)}
 }
 

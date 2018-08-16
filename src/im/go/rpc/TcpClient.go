@@ -288,13 +288,13 @@ func (c *ClientPool) SendAll(pack *Pack) {
 	defer c.lock.RUnlock()
 	for _, v := range c.Conns {
 		if !v.IsClose() {
+			log.Debug("  send mas to ",(*v.Conn).RemoteAddr(),(*v.Conn).LocalAddr())
 			err := v.Send(pack)
 			if nil != err {
 				log.Error(err)
 			}
 		}
 	}
-
 }
 
 func (c *ClientPool) SyncSendAndReturnConn(pack *Pack, timeOut time.Duration) (*Pack, *Connection) {
@@ -373,4 +373,6 @@ func (h clientDefaultHandler) HeartEvent(e *Event, err error) {
 func (h clientDefaultHandler) ConnectionRemove(e *Event, err error) {
 	log.Info(" connection 断开 ,重连", (*e.Conn.Conn).RemoteAddr(), (*e.Conn.Conn).LocalAddr())
 	h.clientPool.ReConn(e.Conn)
+	(*h.handler).ConnectionRemove(e, err)
+	
 }
